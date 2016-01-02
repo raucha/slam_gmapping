@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8)
-project(gmapping)
+project(my_gmapping)
 
-find_package(catkin REQUIRED nav_msgs openslam_gmapping roscpp rostest tf rosbag_storage)
+find_package(catkin REQUIRED nav_msgs my_openslam_gmapping roscpp rostest tf rosbag_storage)
 
 find_package(Boost REQUIRED signals)
 
