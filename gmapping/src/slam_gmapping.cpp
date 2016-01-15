@@ -324,6 +324,15 @@ SlamGMapping::~SlamGMapping() {
   if (scan_filter_sub_) delete scan_filter_sub_;
 }
 
+/**
+ * 中央LRFの座標を"/odom"フレームで取得，第一引数にして返す
+ * @brief 要約説明
+ * @param gmap_pose 返り値ポインタ，中央LRFの座標
+ * @param t 時刻
+ * @return 成功時にtrue
+ * @sa 参照すべき関数を書けばリンクが貼れる
+ * @detail 詳細な説明
+ */
 bool SlamGMapping::getOdomPose(GMapping::OrientedPoint& gmap_pose, const ros::Time& t) {
   // Get the pose of the centered laser at the right time
   centered_laser_pose_.stamp_ = t;
@@ -462,6 +471,13 @@ bool SlamGMapping::initMapper(const sensor_msgs::LaserScan& scan) {
   return true;
 }
 
+/**
+ * 軌跡に新しいロボット座標とその時のLRFの観測値を追加
+ * @brief 要約説明
+ * @param scan LRFのデータ
+ * @param gmap_pose 返り値ポインタ，LRFの座標が"/odom"フレームで入る
+ * @return 実際に軌跡に追加された時はtrue
+ */
 bool SlamGMapping::addScan(const sensor_msgs::LaserScan& scan, GMapping::OrientedPoint& gmap_pose) {
   if (!getOdomPose(gmap_pose, scan.header.stamp)) return false;
 
@@ -603,16 +619,20 @@ void SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan) {
   GMapping::ScanMatcherMap smap(center, xmin_, ymin_, xmax_, ymax_, delta_);
 
   ROS_DEBUG("Trajectory tree:");
-  for (GMapping::GridSlamProcessor::TNode* n = best.node; n; n = n->parent) {
+  int tmp_count = 0;
+  for (GMapping::GridSlamProcessor::TNode* n = best.node; n;
+       n = n->parent) {  ///! 軌跡上の各点を取得
+    tmp_count++;
     ROS_DEBUG("  %.3f %.3f %.3f", n->pose.x, n->pose.y, n->pose.theta);
     if (!n->reading) {
       ROS_DEBUG("Reading is NULL");
       continue;
     }
     matcher.invalidateActiveArea();
-    matcher.computeActiveArea(smap, n->pose, &((*n->reading)[0]));
-    matcher.registerScan(smap, n->pose, &((*n->reading)[0]));
+    matcher.computeActiveArea(smap, n->pose, &((*n->reading)[0]));  ///! 値の変更があるセルを記録
+    matcher.registerScan(smap, n->pose, &((*n->reading)[0]));  ///! セルの値を変更
   }
+  ROS_INFO_STREAM("TNode_num: " << tmp_count);
 
   // the map may have expanded, so resize ros message as well
   if (map_.map.info.width != (unsigned int)smap.getMapSizeX() ||
@@ -649,11 +669,13 @@ void SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan) {
       assert(occ <= 1.0);
       if (occ < 0)
         map_.map.data[MAP_IDX(map_.map.info.width, x, y)] = -1;
-      else if (occ > occ_thresh_) {
-        // map_.map.data[MAP_IDX(map_.map.info.width, x, y)] = (int)round(occ*100.0);
-        map_.map.data[MAP_IDX(map_.map.info.width, x, y)] = 100;
-      } else
-        map_.map.data[MAP_IDX(map_.map.info.width, x, y)] = 0;
+      else
+        map_.map.data[MAP_IDX(map_.map.info.width, x, y)] = (int)100.0 * occ;
+      // else if (occ > occ_thresh_) {
+      //   // map_.map.data[MAP_IDX(map_.map.info.width, x, y)] = (int)round(occ*100.0);
+      //   map_.map.data[MAP_IDX(map_.map.info.width, x, y)] = 100;
+      // } else
+      //   map_.map.data[MAP_IDX(map_.map.info.width, x, y)] = 0;
     }
   }
   got_map_ = true;
