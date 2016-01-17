@@ -337,9 +337,9 @@ bool SlamGMapping::getOdomPose(GMapping::OrientedPoint& gmap_pose, const ros::Ti
   // Get the pose of the centered laser at the right time
   centered_laser_pose_.stamp_ = t;
   // Get the laser's pose that is centered
-  tf::StampedTransform odom_pose;
+  tf::Stamped<tf::Transform> odom_pose;
   try {
-    tf_.lookupTransform(odom_frame_, base_frame_, ros::Time(0), odom_pose);
+    tf_.transformPose(odom_frame_, centered_laser_pose_, odom_pose);
   } catch (tf::TransformException e) {
     ROS_WARN("Failed to compute odom pose, skipping scan (%s)", e.what());
     return false;
@@ -348,20 +348,6 @@ bool SlamGMapping::getOdomPose(GMapping::OrientedPoint& gmap_pose, const ros::Ti
 
   gmap_pose = GMapping::OrientedPoint(odom_pose.getOrigin().x(), odom_pose.getOrigin().y(), yaw);
   return true;
-  // // Get the pose of the centered laser at the right time
-  // centered_laser_pose_.stamp_ = t;
-  // // Get the laser's pose that is centered
-  // tf::Stamped<tf::Transform> odom_pose;
-  // try {
-  //   tf_.transformPose(odom_frame_, centered_laser_pose_, odom_pose);
-  // } catch (tf::TransformException e) {
-  //   ROS_WARN("Failed to compute odom pose, skipping scan (%s)", e.what());
-  //   return false;
-  // }
-  // double yaw = tf::getYaw(odom_pose.getRotation());
-  //
-  // gmap_pose = GMapping::OrientedPoint(odom_pose.getOrigin().x(), odom_pose.getOrigin().y(), yaw);
-  // return true;
 }
 
 bool SlamGMapping::initMapper(const sensor_msgs::LaserScan& scan) {
@@ -430,9 +416,7 @@ bool SlamGMapping::initMapper(const sensor_msgs::LaserScan& scan) {
   ROS_DEBUG("Laser angles in top-down centered laser-frame: min: %.3f max: %.3f inc: %.3f",
             laser_angles_.front(), laser_angles_.back(), std::fabs(scan.angle_increment));
 
-  // GMapping::OrientedPoint base_to_laser(10,0,0);
-  GMapping::OrientedPoint base_to_laser(laser_pose.getOrigin().x(),laser_pose.getOrigin().y(),tf::getYaw(laser_pose.getRotation()));
-  // GMapping::OrientedPoint base_to_laser(0, 0, 0);
+  GMapping::OrientedPoint gmap_pose(0, 0, 0);
 
   // setting maxRange and maxUrange here so we can set a reasonable default
   ros::NodeHandle private_nh_("~");
@@ -445,7 +429,7 @@ bool SlamGMapping::initMapper(const sensor_msgs::LaserScan& scan) {
   // actual increment is negative, we'll swap the order of ranges before
   // feeding each scan to GMapping.
   gsp_laser_ = new GMapping::RangeSensor("FLASER", gsp_laser_beam_count_,
-                                         fabs(scan.angle_increment), base_to_laser, 0.0, maxRange_);
+                                         fabs(scan.angle_increment), gmap_pose, 0.0, maxRange_);
   ROS_ASSERT(gsp_laser_);
 
   GMapping::SensorMap smap;
