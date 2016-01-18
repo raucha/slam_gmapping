@@ -30,6 +30,8 @@
 
 #include <boost/thread.hpp>
 
+#include <sensor_msgs/LaserScan.h>
+
 class SlamGMapping {
  public:
   SlamGMapping();
@@ -42,10 +44,17 @@ class SlamGMapping {
   void publishTransform();
 
   void laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan);
+  void laserCallback1(const sensor_msgs::LaserScan::ConstPtr& scan);
+  void laserCallback2(const sensor_msgs::LaserScan::ConstPtr& scan);
   bool mapCallback(nav_msgs::GetMap::Request& req, nav_msgs::GetMap::Response& res);
   void publishLoop(double transform_publish_period);
 
  private:
+#define SUB_LRF_NUM 1
+  sensor_msgs::LaserScan m_sub_scans[SUB_LRF_NUM];
+  GMapping::OrientedPoint lrf_to_sub_lrf[SUB_LRF_NUM];
+  ros::Subscriber sub_sub_scans[SUB_LRF_NUM];
+
   ros::NodeHandle node_;
   ros::Publisher entropy_publisher_;
   ros::Publisher sst_;
@@ -86,6 +95,7 @@ class SlamGMapping {
   boost::thread* transform_thread_;
 
   std::string base_frame_;
+  //! LRFを原点にした座標系，"camera_depth_frame"
   std::string laser_frame_;
   std::string map_frame_;
   std::string odom_frame_;

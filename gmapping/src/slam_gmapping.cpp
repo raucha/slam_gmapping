@@ -235,6 +235,8 @@ void SlamGMapping::startLiveSlam() {
 
   transform_thread_ =
       new boost::thread(boost::bind(&SlamGMapping::publishLoop, this, transform_publish_period_));
+  sub_sub_scans[0] = node_.subscribe("/scan1", 1000, &SlamGMapping::laserCallback1, this);
+  // sub_sub_scans[1] = node_.subscribe("/scan2", 1000, &SlamGMapping::laserCallback2, this);
 }
 
 void SlamGMapping::startReplay(const std::string& bag_fname, std::string scan_topic) {
@@ -568,6 +570,39 @@ void SlamGMapping::laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan) {
     ROS_DEBUG("cannot process scan");
 }
 
+void SlamGMapping::laserCallback1(const sensor_msgs::LaserScan::ConstPtr& scan) {
+  // 初回時はtfを保存
+  if (m_sub_scans[0].header.seq == 0) {
+    ROS_INFO_STREAM("saving LRF: " << scan->header.frame_id);
+    tf::Stamped<tf::Transform> transform;
+    // tf::StampedTransform transform;
+    try {
+      tf_.waitForTransform(laser_frame_, scan->header.frame_id, ros::Time(0), ros::Duration(10.0));
+      tf_.transformPose(scan->header.frame_id, centered_laser_pose_, transform);
+      // tf_.lookupTransform(laser_frame_, scan->header.frame_id, ros::Time(0), transform);
+      ROS_DEBUG_STREAM("tf lookup succes: " << scan->header.frame_id);
+    } catch (tf::TransformException& ex) {
+      ROS_WARN("%s", ex.what());
+      return;
+    }
+    tf::Transform tmp = transform.inverse();
+    lrf_to_sub_lrf[0] = GMapping::OrientedPoint(
+        tmp.getOrigin().x(), tmp.getOrigin().y(), tf::getYaw(tmp.getRotation()));
+    ROS_INFO_STREAM("lrf_to_sub_lrf X:"<<lrf_to_sub_lrf[0].x<<"  Y:"<<lrf_to_sub_lrf[0].y<< " th:"<<lrf_to_sub_lrf[0].theta/3.1415*180.0);
+  }
+  // tf::Stamped<tf::Transform> odom_pose;
+  // try {
+  //   tf_.transformPose(odom_frame_, centered_laser_pose_, odom_pose);
+  // } catch (tf::TransformException e) {
+  //   ROS_WARN("Failed to compute odom pose, skipping scan (%s)", e.what());
+  //   return false;
+  // }
+  m_sub_scans[0] = *scan;
+}
+
+// void SlamGMapping::laserCallback2(const sensor_msgs::LaserScan::ConstPtr& scan) {
+// }
+
 double SlamGMapping::computePoseEntropy() {
   double weight_total = 0.0;
   for (std::vector<GMapping::GridSlamProcessor::Particle>::const_iterator it =
@@ -585,6 +620,10 @@ double SlamGMapping::computePoseEntropy() {
   return -entropy;
 }
 
+/**
+ * マップを更新する
+ * @param scan レーザの本数(scan.ranges.size())を読むためだけに使われる
+ */
 void SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan) {
   ROS_DEBUG("Update map");
   boost::mutex::scoped_lock map_lock(map_mutex_);
