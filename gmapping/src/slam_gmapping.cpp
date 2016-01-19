@@ -133,6 +133,9 @@ Initial map dimensions and resolution:
 #include <boost/foreach.hpp>
 #define foreach BOOST_FOREACH
 
+// #define OUT_LINE ROS_INFO_STREAM("line:"<<__LINE__)
+#define OUT_LINE 0
+
 // compute linear index for given map coords
 #define MAP_IDX(sx, i, j) ((sx) * (j) + (i))
 
@@ -481,8 +484,9 @@ bool SlamGMapping::initMapper(const sensor_msgs::LaserScan& scan) {
  * @return 実際に軌跡に追加された時はtrue
  */
 bool SlamGMapping::addScan(const sensor_msgs::LaserScan& scan, GMapping::OrientedPoint& gmap_pose) {
+  ROS_DEBUG_STREAM("addScan");
   if (!getOdomPose(gmap_pose, scan.header.stamp)) return false;
-
+  ROS_DEBUG_STREAM("scan.ranges.size():"<<scan.ranges.size()<<" gsp_laser_beam_count_:"<<gsp_laser_beam_count_);
   if (scan.ranges.size() != gsp_laser_beam_count_) return false;
 
   // GMapping wants an array of doubles...
@@ -532,7 +536,6 @@ bool SlamGMapping::addScan(const sensor_msgs::LaserScan& scan, GMapping::Oriente
 void SlamGMapping::laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan) {
   laser_count_++;
   if ((laser_count_ % throttle_scans_) != 0) return;
-
   static ros::Time last_map_update(0, 0);
 
   // We can't initialize the mapper until we've got the first scan
@@ -541,10 +544,18 @@ void SlamGMapping::laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan) {
     got_first_scan_ = true;
   }
 
-  GMapping::OrientedPoint odom_pose;
+// addScan()は時間が掛かるので先にscanを保存しておく
+  std::vector<sensor_msgs::LaserScan> last_sub_scans;
+  for (int i = 0; i < SUB_LRF_NUM; i++) {
+    last_sub_scans.push_back(m_sub_scans[i]);
+  }
 
+  GMapping::OrientedPoint odom_pose;
   if (addScan(*scan, odom_pose)) {
     ROS_DEBUG("scan processed");
+
+    // サブLRFの履歴に登録
+    m_sub_scans_hist.insert(m_sub_scans_hist.begin() + 0, last_sub_scans);
 
     GMapping::OrientedPoint mpose = gsp_->getParticles()[gsp_->getBestParticleIndex()].pose;
     ROS_DEBUG("new best pose: %.3f %.3f %.3f", mpose.x, mpose.y, mpose.theta);
@@ -561,6 +572,16 @@ void SlamGMapping::laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan) {
     map_to_odom_ = (odom_to_laser * laser_to_map).inverse();
     map_to_odom_mutex_.unlock();
 
+    // bool is_sub_lrfs_called = true;
+    // for(int i=0;i<SUB_LRF_NUM;i++){
+    //   ROS_DEBUG_STREAM("m_sub_scans["<<i<<"].header.seq: "<<m_sub_scans[i].header.seq);
+    //   is_sub_lrfs_called &= (0 != m_sub_scans[i].header.seq);
+    // }
+    // if(!is_sub_lrfs_called){
+    //   ROS_DEBUG("laser called but sub_LRFs yet");
+    //   return;
+    // }
+
     if (!got_map_ || (scan->header.stamp - last_map_update) > map_update_interval_) {
       updateMap(*scan);
       last_map_update = scan->header.stamp;
@@ -571,13 +592,18 @@ void SlamGMapping::laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan) {
 }
 
 void SlamGMapping::laserCallback1(const sensor_msgs::LaserScan::ConstPtr& scan) {
+  ROS_DEBUG_STREAM("laserCallback1");
+  ROS_DEBUG_STREAM("laser_frame_:"<<laser_frame_);
+  ROS_DEBUG_STREAM("m_sub_scans[0].header.seq:"<<m_sub_scans[0].header.seq);
+  if(laser_frame_.empty()) return;
   // 初回時はtfを保存
-  if (m_sub_scans[0].header.seq == 0) {
+  if (m_sub_scans[0].header.seq == 0 ) {
     ROS_INFO_STREAM("saving LRF: " << scan->header.frame_id);
     tf::Stamped<tf::Transform> transform;
     // tf::StampedTransform transform;
     try {
-      tf_.waitForTransform(laser_frame_, scan->header.frame_id, ros::Time(0), ros::Duration(10.0));
+      ROS_INFO_STREAM("frame_ids scan1:"<<scan->header.frame_id<<" laser:"<< laser_frame_);
+      tf_.waitForTransform( scan->header.frame_id, laser_frame_, ros::Time(0), ros::Duration(10.0));
       tf_.transformPose(scan->header.frame_id, centered_laser_pose_, transform);
       // tf_.lookupTransform(laser_frame_, scan->header.frame_id, ros::Time(0), transform);
       ROS_DEBUG_STREAM("tf lookup succes: " << scan->header.frame_id);
@@ -586,17 +612,11 @@ void SlamGMapping::laserCallback1(const sensor_msgs::LaserScan::ConstPtr& scan) 
       return;
     }
     tf::Transform tmp = transform.inverse();
-    lrf_to_sub_lrf[0] = GMapping::OrientedPoint(
-        tmp.getOrigin().x(), tmp.getOrigin().y(), tf::getYaw(tmp.getRotation()));
-    ROS_INFO_STREAM("lrf_to_sub_lrf X:"<<lrf_to_sub_lrf[0].x<<"  Y:"<<lrf_to_sub_lrf[0].y<< " th:"<<lrf_to_sub_lrf[0].theta/3.1415*180.0);
+    lrf_to_sub_lrf[0] = GMapping::OrientedPoint(tmp.getOrigin().x(), tmp.getOrigin().y(),
+                                                tf::getYaw(tmp.getRotation()));
+    ROS_INFO_STREAM("lrf_to_sub_lrf X:" << lrf_to_sub_lrf[0].x << "  Y:" << lrf_to_sub_lrf[0].y
+                                        << " th:" << lrf_to_sub_lrf[0].theta / 3.1415 * 180.0);
   }
-  // tf::Stamped<tf::Transform> odom_pose;
-  // try {
-  //   tf_.transformPose(odom_frame_, centered_laser_pose_, odom_pose);
-  // } catch (tf::TransformException e) {
-  //   ROS_WARN("Failed to compute odom pose, skipping scan (%s)", e.what());
-  //   return false;
-  // }
   m_sub_scans[0] = *scan;
 }
 
@@ -651,15 +671,28 @@ void SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan) {
     map_.map.info.origin.orientation.w = 1.0;
   }
 
-  GMapping::Point center;
-  center.x = (xmin_ + xmax_) / 2.0;
-  center.y = (ymin_ + ymax_) / 2.0;
+  GMapping::Point center(0,0);
+  GMapping::ScanMatcherMap smap(center, -10, -10, 10, 10, delta_);
 
-  GMapping::ScanMatcherMap smap(center, xmin_, ymin_, xmax_, ymax_, delta_);
+  // GMapping::Point center;
+  // center.x = (xmin_ + xmax_) / 2.0;
+  // center.y = (ymin_ + ymax_) / 2.0;
+  // GMapping::ScanMatcherMap smap(center, xmin_, ymin_, xmax_, ymax_, delta_);
 
   ROS_DEBUG("Trajectory tree:");
   int tmp_count = 0;
-  for (GMapping::GridSlamProcessor::TNode* n = best.node; n;
+
+  int tmp_sum = 0;
+  for (GMapping::GridSlamProcessor::TNode* n = best.node; n; n = n->parent){
+    tmp_sum++;
+  }
+  ROS_INFO_STREAM("TNode size:"<<tmp_sum);
+  ROS_INFO_STREAM("sub_lrf_hist size:"<<m_sub_scans_hist.size());
+
+  // for (vector<float>::iterator it = scan_indices->end() - 1; it >= scan_indices->begin(); --it) {
+  std::vector<std::vector<sensor_msgs::LaserScan> >::iterator it = m_sub_scans_hist.begin();  // サブLRFの履歴
+  for (GMapping::GridSlamProcessor::TNode* n = best.node;                   // gmappingの軌跡
+       n;
        n = n->parent) {  ///! 軌跡上の各点を取得
     tmp_count++;
     ROS_DEBUG("  %.3f %.3f %.3f", n->pose.x, n->pose.y, n->pose.theta);
@@ -670,13 +703,60 @@ void SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan) {
     matcher.invalidateActiveArea();
     matcher.computeActiveArea(smap, n->pose, &((*n->reading)[0]));  ///! 値の変更があるセルを記録
     matcher.registerScan(smap, n->pose, &((*n->reading)[0]));  ///! セルの値を変更
+    OUT_LINE;
+
+    // サブLRFの観測点を登録
+    for (int j = 0; j < SUB_LRF_NUM; j++) {
+      double* ranges_double = new double[it->at(j).ranges.size()];
+      // If the angle increment is negative, we have to invert the order of the readings.
+      OUT_LINE;
+      if (do_reverse_range_) {
+        ROS_DEBUG("Inverting scan");
+        int num_ranges = it->at(j).ranges.size();
+        for (int i = 0; i < num_ranges; i++) {
+          // Must filter out short readings, because the mapper won't
+          if (it->at(j).ranges[num_ranges - i - 1] < it->at(j).range_min)
+            ranges_double[i] = (double)it->at(j).range_max;
+          else
+            ranges_double[i] = (double)it->at(j).ranges[num_ranges - i - 1];
+        }
+      } else {
+        for (unsigned int i = 0; i < it->at(j).ranges.size(); i++) {
+          // Must filter out short readings, because the mapper won't
+          if (it->at(j).ranges[i] < it->at(j).range_min)
+            ranges_double[i] = (double)it->at(j).range_max;
+          else
+            ranges_double[i] = (double)it->at(j).ranges[i];
+        }
+      }
+
+      GMapping::OrientedPoint ps = n->pose;
+      ps.x += cos(n->pose.theta)*lrf_to_sub_lrf[j].x - sin(n->pose.theta)*lrf_to_sub_lrf[j].y;
+      ps.y += sin(n->pose.theta)*lrf_to_sub_lrf[j].x + cos(n->pose.theta)*lrf_to_sub_lrf[j].y;
+      ps.theta += lrf_to_sub_lrf[j].theta;
+      OUT_LINE;
+      matcher.computeActiveArea(smap, ps, ranges_double);  ///! 値の変更があるセルを記録
+      ROS_INFO_STREAM("line:"<<__LINE__);
+      matcher.registerScan(smap, ps, ranges_double);       ///! セルの値を変更
+      ROS_INFO_STREAM("line:"<<__LINE__);
+      delete[] ranges_double;
+    }
+
+    // GMapping::RangeReading reading(scan.ranges.size(), ranges_double, gsp_laser_,
+    //                                scan.header.stamp.toSec());
+    //
+    // // ...but it deep copies them in RangeReading constructor, so we don't
+    // // need to keep our array around.
+    // delete[] ranges_double;
+    if(it < m_sub_scans_hist.end()-1) ++it;
   }
   ROS_INFO_STREAM("TNode_num: " << tmp_count);
 
   // the map may have expanded, so resize ros message as well
   if (map_.map.info.width != (unsigned int)smap.getMapSizeX() ||
       map_.map.info.height != (unsigned int)smap.getMapSizeY()) {
-    // NOTE: The results of ScanMatcherMap::getSize() are different from the parameters given to the
+    // NOTE: The results of ScanMatcherMap::getSize() are different from the parameters given to
+    // the
     // constructor
     //       so we must obtain the bounding box in a different way
     GMapping::Point wmin = smap.map2world(GMapping::IntPoint(0, 0));
@@ -699,12 +779,16 @@ void SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan) {
     ROS_DEBUG("map origin: (%f, %f)", map_.map.info.origin.position.x,
               map_.map.info.origin.position.y);
   }
+  OUT_LINE;
 
   for (int x = 0; x < smap.getMapSizeX(); x++) {
     for (int y = 0; y < smap.getMapSizeY(); y++) {
       /// @todo Sort out the unknown vs. free vs. obstacle thresholding
+      OUT_LINE;
       GMapping::IntPoint p(x, y);
+      OUT_LINE;
       double occ = smap.cell(p);
+      OUT_LINE;
       assert(occ <= 1.0);
       if (occ < 0)
         map_.map.data[MAP_IDX(map_.map.info.width, x, y)] = -1;
@@ -717,6 +801,7 @@ void SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan) {
       //   map_.map.data[MAP_IDX(map_.map.info.width, x, y)] = 0;
     }
   }
+  OUT_LINE;
   got_map_ = true;
 
   // make sure to set the header information on the map
