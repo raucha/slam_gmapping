@@ -30,8 +30,6 @@
 
 #include <boost/thread.hpp>
 
-// #include <sensor_msgs/LaserScan.h>
-
 class SlamGMapping {
  public:
   SlamGMapping();
@@ -53,9 +51,7 @@ class SlamGMapping {
 #define SUB_LRF_NUM 1
   sensor_msgs::LaserScan m_sub_scans[SUB_LRF_NUM];
   std::vector<std::vector<sensor_msgs::LaserScan> > m_sub_scans_hist;
-  // std::vector<std::array<sensor_msgs::LaserScan, SUB_LRF_NUM>> m_sub_scans_hist;
-  // std::vector<sensor_msgs::LaserScan> m_sub_scans_hist;
-  GMapping::OrientedPoint lrf_to_sub_lrf[SUB_LRF_NUM];
+  tf::Transform m_lrf_to_sublrf[SUB_LRF_NUM];
   ros::Subscriber sub_sub_scans[SUB_LRF_NUM];
 
   ros::NodeHandle node_;
