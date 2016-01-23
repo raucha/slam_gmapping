@@ -47,7 +47,7 @@ class SlamGMapping {
   void publishLoop(double transform_publish_period);
 
  private:
-#define SUB_LRF_NUM 1
+#define SUB_LRF_NUM 2
   sensor_msgs::LaserScan m_sub_scans[SUB_LRF_NUM];
   std::vector<std::vector<sensor_msgs::LaserScan> > m_sub_scans_hist;
   tf::Transform m_lrf_to_sublrf[SUB_LRF_NUM];
