@@ -42,8 +42,7 @@ class SlamGMapping {
   void publishTransform();
 
   void laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan);
-  void laserCallback1(const sensor_msgs::LaserScan::ConstPtr& scan);
-  void laserCallback2(const sensor_msgs::LaserScan::ConstPtr& scan);
+  void sublaserCallback(const sensor_msgs::LaserScan::ConstPtr& scan, int index);
   bool mapCallback(nav_msgs::GetMap::Request& req, nav_msgs::GetMap::Response& res);
   void publishLoop(double transform_publish_period);
 

@@ -131,6 +131,7 @@ Initial map dimensions and resolution:
 #include <rosbag/bag.h>
 #include <rosbag/view.h>
 #include <boost/foreach.hpp>
+#include <sstream>
 #define foreach BOOST_FOREACH
 
 // compute linear index for given map coords
@@ -235,8 +236,12 @@ void SlamGMapping::startLiveSlam() {
 
   transform_thread_ =
       new boost::thread(boost::bind(&SlamGMapping::publishLoop, this, transform_publish_period_));
-  sub_sub_scans[0] = node_.subscribe("/scan1", 5, &SlamGMapping::laserCallback1, this);
-  // sub_sub_scans[1] = node_.subscribe("/scan2", 1000, &SlamGMapping::laserCallback2, this);
+  for (int i = 0; i < SUB_LRF_NUM; i++) {
+    std::ostringstream topic;
+    topic << "/subscan" << i;
+    sub_sub_scans[i] = node_.subscribe<sensor_msgs::LaserScan>(
+        topic.str(), 5, boost::bind(&SlamGMapping::sublaserCallback, this, _1, i));
+  }
 }
 
 void SlamGMapping::startReplay(const std::string& bag_fname, std::string scan_topic) {
@@ -551,6 +556,7 @@ bool SlamGMapping::addScan(const sensor_msgs::LaserScan& scan, GMapping::Oriente
 void SlamGMapping::laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan) {
   laser_count_++;
   if ((laser_count_ % throttle_scans_) != 0) return;
+  // サブLRF待ち
   bool is_waiting_sublrf = false;
   for (int i = 0; i < SUB_LRF_NUM; i++) is_waiting_sublrf |= (0 == m_sub_scans[i].header.seq);
   if (is_waiting_sublrf) {
@@ -570,8 +576,10 @@ void SlamGMapping::laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan) {
   for (int i = 0; i < SUB_LRF_NUM; i++) {
     last_sub_scans.at(i) = m_sub_scans[i];
     // サブの観測時刻がずれ過ぎている時は捨ててダミーデータを入れる
-    if (ros::Duration(1.0) < scan->header.stamp - m_sub_scans[i].header.stamp ||
-        ros::Duration(1.0) > scan->header.stamp - m_sub_scans[i].header.stamp) {
+    if (ros::Duration(3.0).toSec() <
+        fabs((scan->header.stamp - m_sub_scans[i].header.stamp).toSec())) {
+      ROS_DEBUG_STREAM("scan stamp:" << scan->header.stamp << "  m_sub_scans[" << i
+                                     << "]stamp:" << m_sub_scans[i].header.stamp);
       float range_max = last_sub_scans[i].range_max;
       for (std::vector<float>::iterator it = last_sub_scans[i].ranges.begin();
            it < last_sub_scans[i].ranges.end(); it++) {
@@ -611,12 +619,9 @@ void SlamGMapping::laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan) {
     ROS_DEBUG("cannot process scan");
 }
 
-void SlamGMapping::laserCallback1(const sensor_msgs::LaserScan::ConstPtr& scan) {
-  m_sub_scans[0] = *scan;
+void SlamGMapping::sublaserCallback(const sensor_msgs::LaserScan::ConstPtr& scan, int index) {
+  m_sub_scans[index] = *scan;
 }
-
-// void SlamGMapping::laserCallback2(const sensor_msgs::LaserScan::ConstPtr& scan) {
-// }
 
 double SlamGMapping::computePoseEntropy() {
   double weight_total = 0.0;
@@ -672,7 +677,6 @@ void SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan) {
   GMapping::ScanMatcherMap smap(center, xmin_, ymin_, xmax_, ymax_, delta_);
 
   ROS_DEBUG("Trajectory tree:");
-  int tmp_count = 0;
 
   int tmp_sum = 0;
   for (GMapping::GridSlamProcessor::TNode* n = best.node; n; n = n->parent) {
@@ -685,7 +689,6 @@ void SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan) {
   std::vector<std::vector<sensor_msgs::LaserScan> >::iterator it = m_sub_scans_hist.begin();
   // 軌跡上の各点を取得
   for (GMapping::GridSlamProcessor::TNode* n = best.node; n; n = n->parent) {
-    tmp_count++;
     ROS_DEBUG("  %.3f %.3f %.3f", n->pose.x, n->pose.y, n->pose.theta);
     if (!n->reading) {
       ROS_DEBUG("Reading is NULL");
@@ -727,15 +730,12 @@ void SlamGMapping::updateMap(const sensor_msgs::LaserScan& scan) {
       ps.theta += tf::getYaw(m_lrf_to_sublrf[j].getRotation());
       matcher.invalidateActiveArea();
       matcher.computeActiveArea(smap, ps, ranges_double);  ///! 値の変更があるセルを記録
-      ROS_INFO_STREAM("line:" << __LINE__);
       matcher.registerScan(smap, ps, ranges_double);  ///! セルの値を変更
-      ROS_INFO_STREAM("line:" << __LINE__);
       delete[] ranges_double;
     }
 
     if (it < m_sub_scans_hist.end() - 1) ++it;
   }
-  ROS_INFO_STREAM("TNode_num: " << tmp_count);
 
   // the map may have expanded, so resize ros message as well
   if (map_.map.info.width != (unsigned int)smap.getMapSizeX() ||
