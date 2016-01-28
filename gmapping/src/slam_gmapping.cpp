@@ -238,7 +238,7 @@ void SlamGMapping::startLiveSlam() {
       new boost::thread(boost::bind(&SlamGMapping::publishLoop, this, transform_publish_period_));
   for (int i = 0; i < SUB_LRF_NUM; i++) {
     std::ostringstream topic;
-    topic << "/subscan" << i;
+    topic << "subscan" << i;
     sub_sub_scans[i] = node_.subscribe<sensor_msgs::LaserScan>(
         topic.str(), 5, boost::bind(&SlamGMapping::sublaserCallback, this, _1, i));
   }
@@ -620,6 +620,7 @@ void SlamGMapping::laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan) {
 }
 
 void SlamGMapping::sublaserCallback(const sensor_msgs::LaserScan::ConstPtr& scan, int index) {
+  ROS_DEBUG_STREAM("get subscan index:"<<index);
   m_sub_scans[index] = *scan;
 }
 
